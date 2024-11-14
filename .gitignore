@@ -1,0 +1,4 @@
+*.mp3
+cookies.txt
+.DS_STORE
+__pycache__

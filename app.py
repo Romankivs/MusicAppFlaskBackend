@@ -6,13 +6,13 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 
 app = Flask(__name__)
-app.secret_key = 'C3zO7bxxx5'
 
-SONG_DIRECTORY = os.path.join(os.getcwd(), "songs")
-app.config['DB_PATH'] = 'songs.db'
+# Load configurations from a separate file
+app.config.from_pyfile('config.py')
 
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
-ALLOWED_EXTENSIONS = {'mp3'}
+SONG_DIRECTORY = app.config['SONG_DIRECTORY']
+ALLOWED_EXTENSIONS = app.config['ALLOWED_EXTENSIONS']
+MAX_CONTENT_LENGTH = app.config['MAX_CONTENT_LENGTH']
 
 class DatabaseService:
     """Handles database interactions."""
