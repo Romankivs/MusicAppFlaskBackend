@@ -66,6 +66,20 @@ class DatabaseService:
             cursor.execute('SELECT id, title, author, duration, music_file_url FROM songs')
             return cursor.fetchall()
 
+    def delete_song(self, song_id):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT music_file_url FROM songs WHERE id = ?', (song_id,))
+            song = cursor.fetchone()
+            if song:
+                file_path = os.path.join(SONG_DIRECTORY, song[0])
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+
+                cursor.execute('DELETE FROM songs WHERE id = ?', (song_id,))
+                return True
+            return False
+
 class AuthService:
     """Handles user authentication and authorization."""
 
@@ -115,6 +129,17 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+# Admin required decorator
+def admin_required(f):
+    """Decorator to ensure the user is an admin."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user_id = session.get('user_id')
+        if not user_id or auth_service.get_username_by_id(user_id) != 'admin':
+            return jsonify({"error": "Admin permissions required"}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
 @app.route('/register', methods=['POST'])
 def register():
     data = request.get_json()
@@ -150,13 +175,8 @@ def logout():
 
 @app.route('/upload', methods=['POST'])
 @login_required
+@admin_required
 def upload_song():
-    # Check if the logged-in user is admin
-    user_id = session.get('user_id')
-    username = auth_service.get_username_by_id(user_id)
-    if username != "admin":
-        return jsonify({"error": "You do not have permission to upload songs"}), 403
-
     if 'file' not in request.files:
         return jsonify({"error": "No file part"}), 400
 
@@ -191,27 +211,12 @@ def upload_song():
 
 @app.route('/songs/<int:song_id>', methods=['DELETE'])
 @login_required
+@admin_required
 def delete_song(song_id):
-    # Check if the logged-in user is admin
-    user_id = session.get('user_id')
-    username = auth_service.get_username_by_id(user_id)
-    if username != "admin":
-        return jsonify({"error": "You do not have permission to delete songs"}), 403
-
-    with db_service.get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT music_file_url FROM songs WHERE id = ?', (song_id,))
-        song = cursor.fetchone()
-
-        if song:
-            file_path = os.path.join(SONG_DIRECTORY, song[0])
-            if os.path.exists(file_path):
-                os.remove(file_path)
-
-            cursor.execute('DELETE FROM songs WHERE id = ?', (song_id,))
-            return jsonify({"message": "Song deleted successfully"}), 200
-        else:
-            return jsonify({"error": "Song not found"}), 404
+    if db_service.delete_song(song_id):
+        return jsonify({"message": "Song deleted successfully"}), 200
+    else:
+        return jsonify({"error": "Song not found"}), 404
 
 @app.route('/songs/<int:song_id>')
 @login_required
