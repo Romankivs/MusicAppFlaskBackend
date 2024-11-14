@@ -2,3 +2,4 @@
 cookies.txt
 .DS_STORE
 __pycache__
+*.db

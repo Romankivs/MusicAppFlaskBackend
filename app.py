@@ -15,15 +15,14 @@ ALLOWED_EXTENSIONS = app.config['ALLOWED_EXTENSIONS']
 MAX_CONTENT_LENGTH = app.config['MAX_CONTENT_LENGTH']
 
 class DatabaseService:
-    """Handles database interactions."""
+    """Handles database interactions with context management."""
     
     def __init__(self, db_path):
         self.db_path = db_path
         self.init_db()
 
     def init_db(self):
-        if not os.path.exists(self.db_path):
-            conn = sqlite3.connect(self.db_path)
+        with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS songs (
@@ -41,37 +40,31 @@ class DatabaseService:
                 password TEXT NOT NULL
             )
             ''')
-            conn.commit()
-            conn.close()
+
+    def get_connection(self):
+        return sqlite3.connect(self.db_path)
 
     def add_song(self, title, author, duration, music_file_url):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('''
-        INSERT INTO songs (title, author, duration, music_file_url)
-        VALUES (?, ?, ?, ?)
-        ''', (title, author, duration, music_file_url))
-        song_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return song_id
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+            INSERT INTO songs (title, author, duration, music_file_url)
+            VALUES (?, ?, ?, ?)
+            ''', (title, author, duration, music_file_url))
+            return cursor.lastrowid
 
     def get_song(self, song_id):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('SELECT title, author, duration, music_file_url FROM songs WHERE id = ?', (song_id,))
-        song = cursor.fetchone()
-        conn.close()
-        return song
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT title, author, duration, music_file_url FROM songs WHERE id = ?', (song_id,))
+            return cursor.fetchone()
 
     def get_all_songs(self):
         """Retrieve all songs metadata."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('SELECT id, title, author, duration, music_file_url FROM songs')
-        songs = cursor.fetchall()
-        conn.close()
-        return songs
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT id, title, author, duration, music_file_url FROM songs')
+            return cursor.fetchall()
 
 class AuthService:
     """Handles user authentication and authorization."""
@@ -82,35 +75,29 @@ class AuthService:
     def register_user(self, username, password):
         hashed_password = generate_password_hash(password)
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_password))
-            conn.commit()
-            conn.close()
-            return True
+            with DatabaseService(self.db_path).get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_password))
+                return True
         except sqlite3.IntegrityError:
-            conn.close()
             return False
 
     def verify_user(self, username, password):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, password FROM users WHERE username = ?", (username,))
-        user = cursor.fetchone()
-        conn.close()
-
-        if user and check_password_hash(user[1], password):
-            return user[0]  # Return user ID on successful authentication
-        return None
+        with DatabaseService(self.db_path).get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, password FROM users WHERE username = ?", (username,))
+            user = cursor.fetchone()
+            if user and check_password_hash(user[1], password):
+                return user[0]  # Return user ID on successful authentication
+            return None
 
     def get_username_by_id(self, user_id):
         """Get the username by user_id."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT username FROM users WHERE id = ?", (user_id,))
-        user = cursor.fetchone()
-        conn.close()
-        return user[0] if user else None
+        with DatabaseService(self.db_path).get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT username FROM users WHERE id = ?", (user_id,))
+            user = cursor.fetchone()
+            return user[0] if user else None
 
 # Instantiate services
 db_service = DatabaseService(app.config['DB_PATH'])
@@ -211,26 +198,20 @@ def delete_song(song_id):
     if username != "admin":
         return jsonify({"error": "You do not have permission to delete songs"}), 403
 
-    # Try to delete the song from the database
-    conn = sqlite3.connect(app.config['DB_PATH'])
-    cursor = conn.cursor()
-    cursor.execute('SELECT music_file_url FROM songs WHERE id = ?', (song_id,))
-    song = cursor.fetchone()
+    with db_service.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT music_file_url FROM songs WHERE id = ?', (song_id,))
+        song = cursor.fetchone()
 
-    if song:
-        # Remove the song file from the directory
-        file_path = os.path.join(SONG_DIRECTORY, song[0])
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        if song:
+            file_path = os.path.join(SONG_DIRECTORY, song[0])
+            if os.path.exists(file_path):
+                os.remove(file_path)
 
-        # Remove song from the database
-        cursor.execute('DELETE FROM songs WHERE id = ?', (song_id,))
-        conn.commit()
-        conn.close()
-        return jsonify({"message": "Song deleted successfully"}), 200
-    else:
-        conn.close()
-        return jsonify({"error": "Song not found"}), 404
+            cursor.execute('DELETE FROM songs WHERE id = ?', (song_id,))
+            return jsonify({"message": "Song deleted successfully"}), 200
+        else:
+            return jsonify({"error": "Song not found"}), 404
 
 @app.route('/songs/<int:song_id>')
 @login_required
